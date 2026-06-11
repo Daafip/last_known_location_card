@@ -1,17 +1,17 @@
 import Leaflet from "leaflet";
 import {getTrackColor} from "./utils.js";
 
-const DEFAULT_CENTER = [52.3731339, 4.8903147];
 const DEFAULT_ZOOM = 13;
 
 export class TimelineLeafletMap {
-    constructor(mapElement) {
+    constructor(mapElement, homeZoneCenter = null) {
         if (!mapElement?.isConnected) {
             throw new Error("Cannot setup Leaflet map on disconnected element");
         }
 
         this._Leaflet = Leaflet;
         this._mapElement = mapElement;
+        this._homeZoneCenter = homeZoneCenter;
         this._leafletMap = Leaflet.map(mapElement, {zoomControl: true});
 
         const attribution =
@@ -23,7 +23,8 @@ export class TimelineLeafletMap {
             maxZoom: 20,
         });
         tileLayer.addTo(this._leafletMap);
-        this._leafletMap.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+
+        if (this._homeZoneCenter) this._leafletMap.setView(this._homeZoneCenter, DEFAULT_ZOOM);
 
         this._mapLayers = [];
         this._fullDayPaths = [];
@@ -129,7 +130,10 @@ export class TimelineLeafletMap {
         if (bounds === null) {
             bounds = this._fullDayPath?.points?.map((point) => point.point) || [];
         }
-        if (!bounds.length) return;
+        if (!bounds.length) {
+            if (this._homeZoneCenter) this._leafletMap.setView(this._homeZoneCenter, DEFAULT_ZOOM);
+            return;
+        }
         const normalizedBounds = bounds
             .map(normalizeLatLng)
             .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lng));

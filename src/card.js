@@ -338,7 +338,7 @@ class TimelineCard extends HTMLElement {
 
         this._isLoadingMap = true;
         try {
-            this._mapView = new TimelineLeafletMap(container);
+            this._mapView = new TimelineLeafletMap(container, this._getHomeZoneCenter());
             this._setDarkMode();
             this._drawMapPaths();
         } catch (err) {
@@ -505,6 +505,14 @@ class TimelineCard extends HTMLElement {
         this._activeEntityIndex = index;
         this._renderEntitySelector(true);
         this._render();
+    }
+
+    _getHomeZoneCenter() {
+        const state = this._hass?.states?.["zone.home"];
+        const lat = Number(state?.attributes?.latitude);
+        const lng = Number(state?.attributes?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+        return {lat, lng};
     }
 
     _fitMapToCurrentMode() {
