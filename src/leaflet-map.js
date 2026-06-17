@@ -21,6 +21,7 @@ export class TimelineLeafletMap {
             subdomains: "abcd",
             minZoom: 0,
             maxZoom: 20,
+            referrerPolicy: "no-referrer-when-downgrade",
         });
         tileLayer.addTo(this._leafletMap);
 
