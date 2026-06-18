@@ -11,15 +11,12 @@ import {
     normalizeList,
     startOfDay,
 } from "./utils.js";
-import {TimelineLeafletMap} from "./leaflet-map.js";
-import {clearPersistentCache} from "./reverse-geocoding.js";
+import {LocationLeafletMap} from "./leaflet-map.js";
 import {getConfigFormSchema} from "./config-flow.js";
 import {localize} from "./localize/localize.js";
 
 const DEFAULT_CONFIG = {
     entity: [],
-    places_entity: [],
-    osm_api_key: null,
     stay_radius_m: 75,
     min_stay_minutes: 10,
     max_reasonable_speed_kmh: 300,
@@ -28,10 +25,6 @@ const DEFAULT_CONFIG = {
     distance_unit: "metric",
     colors: [],
     hide_current_location: false,
-    hide_moving: false,
-    reverse_timeline_order: false,
-    collapse_timeline: false,
-    timeline_use_entity_color: false,
     debug: false,
     activity_icon_map: {},
     update_interval: 300,
@@ -61,7 +54,7 @@ function writeActivityCacheStore(store) {
     }
 }
 
-class TimelineCard extends HTMLElement {
+class LastKnownLocationCard extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({mode: "open"});
@@ -74,6 +67,7 @@ class TimelineCard extends HTMLElement {
         this._activeEntityIndex = 0;
         this._updateIntervalId = null;
         this._dateInitialized = false;
+        this._lookbackExhausted = false;
         this._resetMapFitMode();
         this._addEventListeners();
     }
@@ -84,9 +78,6 @@ class TimelineCard extends HTMLElement {
         this._checkConfig();
 
         this._cache.clear();
-        if (this._config.debug) {
-            clearPersistentCache();
-        }
 
         this._activeEntityIndex = 0;
         this._dateInitialized = false;
@@ -96,7 +87,7 @@ class TimelineCard extends HTMLElement {
         this._renderEntitySelector(true);
         this._applyMapHeight();
         this._setupUpdateInterval();
-        if (this._hass) {
+        if (this._hass && this._entitiesHaveState()) {
             this._dateInitialized = true;
             this._dateInitializing = true;
             this._initializeSelectedDate().finally(() => {
@@ -113,9 +104,18 @@ class TimelineCard extends HTMLElement {
         this._setDarkMode();
         this._renderEntitySelector();
         if (!this._config.entity) return;
-        this._config.entity = normalizeEntityEntries(this._config, this._hass);
+        this._config.entity = normalizeEntityEntries(this._config);
 
-        if (!this._dateInitialized && this._config.entity.length) {
+        if (!this._dateInitialized) {
+            // Wait for the entity's state to actually arrive before searching, so
+            // a hass push that precedes the states doesn't latch us onto "today".
+            if (!this._config.entity.length || !this._entitiesHaveState()) {
+                if (!this._rendered) {
+                    this._render();
+                    this._rendered = true;
+                }
+                return;
+            }
             this._dateInitialized = true;
             this._dateInitializing = true;
             this._initializeSelectedDate().finally(() => {
@@ -156,7 +156,6 @@ class TimelineCard extends HTMLElement {
 
     _checkConfig() {
         this._config.entity = normalizeEntityEntries(this._config);
-        this._config.places_entity = normalizeList(this._config.places_entity);
         this._config.colors = normalizeList(this._config.colors);
         if (this._config.entity.length === 0) {
             throw new Error("You need to define an entity");
@@ -205,6 +204,10 @@ class TimelineCard extends HTMLElement {
             });
     }
 
+    _entitiesHaveState() {
+        return this._config.entity.some((entry) => Boolean(this._hass?.states?.[entry.entity]));
+    }
+
     _activityCacheKey() {
         const ids = this._config.entity
             .map((entry) => entry.entity)
@@ -249,6 +252,7 @@ class TimelineCard extends HTMLElement {
         if (!force) {
             const cached = this._readActivityCache();
             if (cached) {
+                this._lookbackExhausted = false;
                 if (this._config.debug) {
                     console.log(
                         "%c[Last Known Location] using cached last-activity date:",
@@ -280,6 +284,13 @@ class TimelineCard extends HTMLElement {
             console.warn("Last known location card: history lookback failed", err);
         }
         const resolved = found || startDay;
+        this._lookbackExhausted = found === null;
+        if (this._lookbackExhausted) {
+            console.warn(
+                `Last known location card: no movement found for ${entityIds.join(", ")} in the last ` +
+                    `${maxLookback} days; showing ${formatDate(resolved)}.`,
+            );
+        }
         this._writeActivityCache(resolved);
         if (this._config.debug) {
             console.log(
@@ -319,7 +330,7 @@ class TimelineCard extends HTMLElement {
     }
 
     _logCacheToConsole() {
-        console.log("%c[Location Timeline Debug]", "color: white; background-color: #03a9f4; font-weight: bold;");
+        console.log("%c[Last Known Location Debug]", "color: white; background-color: #03a9f4; font-weight: bold;");
         console.log(JSON.stringify(this._cache.get(formatDate(this._selectedDate))));
     }
 
@@ -363,6 +374,8 @@ class TimelineCard extends HTMLElement {
                 status.innerHTML = `<div class="error">${dayData.error}</div>`;
             } else if (dayData.loading) {
                 status.innerHTML = `<div class="loading">${localize("card.timeline.loading")}</div>`;
+            } else if (this._lookbackExhausted) {
+                status.innerHTML = `<div class="loading">No movement in the last ${this._config.max_lookback_days} days</div>`;
             } else {
                 status.innerHTML = "";
             }
@@ -403,11 +416,7 @@ class TimelineCard extends HTMLElement {
         if (!fitToggleBtn) return;
         const icon = fitToggleBtn.querySelector("ha-icon");
 
-        if (this._mapFitMode === "segment") {
-            fitToggleBtn.toggleAttribute("hidden", false);
-            icon.setAttribute("icon", "mdi:magnify-scan");
-            fitToggleBtn.setAttribute("label", "Switch to full path fit");
-        } else if (isToday(this._selectedDate) && !this._config.hide_current_location) {
+        if (isToday(this._selectedDate) && !this._config.hide_current_location) {
             fitToggleBtn.toggleAttribute("hidden", false);
             if (this._mapFitMode === "current_location") {
                 icon.setAttribute("icon", "mdi:magnify-scan");
@@ -431,11 +440,11 @@ class TimelineCard extends HTMLElement {
 
         this._isLoadingMap = true;
         try {
-            this._mapView = new TimelineLeafletMap(container, this._getHomeZoneCenter());
+            this._mapView = new LocationLeafletMap(container, this._getHomeZoneCenter());
             this._setDarkMode();
             this._drawMapPaths();
         } catch (err) {
-            console.warn("Timeline card: map setup failed", err);
+            console.warn("Last known location card: map setup failed", err);
         } finally {
             this._isLoadingMap = false;
         }
@@ -510,12 +519,10 @@ class TimelineCard extends HTMLElement {
         this._cache.set(key, {loading: true, tracks: null, error: null});
 
         try {
-            const tracks = await getSegmentedTracks(date, this._config, this._hass, () => {
-                this._render();
-            });
+            const tracks = await getSegmentedTracks(date, this._config, this._hass);
             this._cache.set(key, {loading: false, tracks, error: null});
         } catch (err) {
-            console.warn("Timeline card: history fetch failed", err);
+            console.warn("Last known location card: history fetch failed", err);
             this._cache.set(key, {
                 loading: false,
                 tracks: null,
@@ -570,11 +577,9 @@ class TimelineCard extends HTMLElement {
         this._fitMapToCurrentMode();
     }
 
+    // The entity's current (last-known) position from its live state, shown as a
+    // marker on top of the historical path regardless of which day is displayed.
     _getCurrentEntityLocations() {
-        if (!isToday(this._selectedDate)) {
-            return [];
-        }
-
         return this._config.entity
             .map(({entity: entityId}, index) => {
                 const state = this._hass?.states?.[entityId];
@@ -585,6 +590,7 @@ class TimelineCard extends HTMLElement {
                 return {
                     point: [lat, lon],
                     picture: state?.attributes?.entity_picture || null,
+                    icon: state?.attributes?.icon || null,
                     name: state?.attributes?.friendly_name || entityId,
                     color: getTrackColor(index, this._config?.colors, this._config.entity[index]?.color),
                     isActive: index === this._activeEntityIndex,
@@ -625,7 +631,7 @@ class TimelineCard extends HTMLElement {
     }
 }
 
-customElements.define("last-known-location-card", TimelineCard);
+customElements.define("last-known-location-card", LastKnownLocationCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({

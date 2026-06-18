@@ -134,11 +134,11 @@ export function normalizeList(value) {
     return list.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean);
 }
 
-export function normalizeEntityEntries(config, hass = null) {
+export function normalizeEntityEntries(config) {
     const value = config.entity;
     if (!value) return [];
     const list = Array.isArray(value) ? value : [value];
-    const entries = list
+    return list
         .map((item) => {
             if (typeof item === "string") {
                 const trimmed = item.trim();
@@ -151,9 +151,6 @@ export function normalizeEntityEntries(config, hass = null) {
                 if (typeof item.activity_entity === "string" && item.activity_entity.trim()) {
                     entry.activity_entity = item.activity_entity.trim();
                 }
-                if (typeof item.places_entity === "string" && item.places_entity.trim()) {
-                    entry.places_entity = item.places_entity.trim();
-                }
                 if (typeof item.color === "string" && item.color.trim()) {
                     entry.color = item.color.trim();
                 }
@@ -162,30 +159,6 @@ export function normalizeEntityEntries(config, hass = null) {
             return null;
         })
         .filter(Boolean);
-
-    if (hass) {
-        const placeEntityIds = Array.isArray(config.places_entity) ? config.places_entity : [];
-        const trackedEntities = new Set(entries.map((e) => e.entity));
-
-        const topLevelPlacesMap = new Map();
-        placeEntityIds.forEach((placeEntityId) => {
-            const trackerEntityId = hass?.states?.[placeEntityId]?.attributes?.devicetracker_entityid;
-            if (trackerEntityId && trackedEntities.has(trackerEntityId)) {
-                topLevelPlacesMap.set(trackerEntityId, placeEntityId);
-            }
-        });
-
-        for (const entry of entries) {
-            if (!entry.places_entity) {
-                const fallbackPlace = topLevelPlacesMap.get(entry.entity);
-                if (fallbackPlace) {
-                    entry.places_entity = fallbackPlace;
-                }
-            }
-        }
-    }
-
-    return entries;
 }
 
 export function formatErrorMessage(err) {

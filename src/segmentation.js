@@ -1,5 +1,4 @@
 import {endOfDay, haversineMeters, startOfDay, toLatLon, toPoint} from "./utils.js";
-import {resolveStaySegments} from "./reverse-geocoding.js";
 import {resolveActivities} from "./activity.js";
 
 export function segmentTimeline(points, config, zones) {
@@ -359,7 +358,7 @@ export async function findLastActivityDate(hass, entityIds, fromDate, maxLookbac
     return null;
 }
 
-export async function getSegmentedTracks(date, config, hass, onQueueUpdate) {
+export async function getSegmentedTracks(date, config, hass) {
     const entityEntries = config.entity;
     const zones = collectZones(hass);
 
@@ -370,16 +369,12 @@ export async function getSegmentedTracks(date, config, hass, onQueueUpdate) {
             const rawPoints = rawStates.map((state) => toPoint(state)).filter(Boolean).filter((p) => p.lat !== 0 || p.lon !== 0);
             const points = filterSpeedOutliers(rawPoints, config.max_reasonable_speed_kmh);
 
-            const placeEntityId = entry.places_entity || null;
-            const placeStates = placeEntityId ? await fetchEntityHistory(hass, placeEntityId, date) : [];
-
             const activityEntityId = entry.activity_entity || null;
             const activityStates = activityEntityId ? await fetchEntityHistory(hass, activityEntityId, date) : [];
 
             const baseSegments = segmentTimeline(points, config, zones);
-            resolveStaySegments(baseSegments, placeStates, date, config.osm_api_key, onQueueUpdate);
             const segments = resolveActivities(baseSegments, activityStates, date, config.activity_icon_map, zones);
-            return {entityId, placeEntityId, activityEntityId, points, segments};
+            return {entityId, activityEntityId, points, segments};
         }),
     );
 }

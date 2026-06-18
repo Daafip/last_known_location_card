@@ -14,24 +14,6 @@ export function getConfigFormSchema() {
             {
                 type: "expandable",
                 name: "",
-                title: "Reverse geocoding",
-                flatten: true,
-                schema: [
-                    {
-                        name: "places_entity",
-                        selector: {
-                            entity: {
-                                multiple: true,
-                                filter: [{domain: "sensor", integration: "places"}],
-                            },
-                        },
-                    },
-                    {name: "osm_api_key", selector: {text: {type: "email"}}},
-                ],
-            },
-            {
-                type: "expandable",
-                name: "",
                 title: "Detection parameters",
                 flatten: true,
                 schema: [
@@ -88,25 +70,7 @@ export function getConfigFormSchema() {
                         name: "map_height_px",
                         selector: {number: {unit_of_measurement: "px"}},
                     },
-                    {
-                        type: "grid",
-                        name: "",
-                        flatten: true,
-                        schema: [
-                            {name: "hide_current_location", selector: {boolean: {}}},
-                            {name: "hide_moving", selector: {boolean: {}}},
-                            {name: "reverse_timeline_order", selector: {boolean: {}}},
-                        ],
-                    },
-                    {
-                        type: "grid",
-                        name: "",
-                        flatten: true,
-                        schema: [
-                            {name: "collapse_timeline", selector: {boolean: {}}},
-                            {name: "timeline_use_entity_color", selector: {boolean: {}}},
-                        ]
-                    },
+                    {name: "hide_current_location", selector: {boolean: {}}},
                     {name: "colors", selector: {text: {multiple: true}}},
                     {
                         name: "activity_icon_map",
