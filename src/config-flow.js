@@ -14,24 +14,6 @@ export function getConfigFormSchema() {
             {
                 type: "expandable",
                 name: "",
-                title: "Reverse geocoding",
-                flatten: true,
-                schema: [
-                    {
-                        name: "places_entity",
-                        selector: {
-                            entity: {
-                                multiple: true,
-                                filter: [{domain: "sensor", integration: "places"}],
-                            },
-                        },
-                    },
-                    {name: "osm_api_key", selector: {text: {type: "email"}}},
-                ],
-            },
-            {
-                type: "expandable",
-                name: "",
                 title: "Detection parameters",
                 flatten: true,
                 schema: [
@@ -88,25 +70,7 @@ export function getConfigFormSchema() {
                         name: "map_height_px",
                         selector: {number: {unit_of_measurement: "px"}},
                     },
-                    {
-                        type: "grid",
-                        name: "",
-                        flatten: true,
-                        schema: [
-                            {name: "hide_current_location", selector: {boolean: {}}},
-                            {name: "hide_moving", selector: {boolean: {}}},
-                            {name: "reverse_timeline_order", selector: {boolean: {}}},
-                        ],
-                    },
-                    {
-                        type: "grid",
-                        name: "",
-                        flatten: true,
-                        schema: [
-                            {name: "collapse_timeline", selector: {boolean: {}}},
-                            {name: "timeline_use_entity_color", selector: {boolean: {}}},
-                        ]
-                    },
+                    {name: "hide_current_location", selector: {boolean: {}}},
                     {name: "colors", selector: {text: {multiple: true}}},
                     {
                         name: "activity_icon_map",
@@ -127,6 +91,33 @@ export function getConfigFormSchema() {
                 schema: [
                     {
                         name: "update_interval",
+                        selector: {number: {min: 0, step: 1, unit_of_measurement: "sec", mode: "box"}},
+                    },
+                ],
+            },
+            {
+                type: "expandable",
+                name: "",
+                title: "Last activity search",
+                flatten: true,
+                schema: [
+                    {
+                        type: "grid",
+                        name: "",
+                        flatten: true,
+                        schema: [
+                            {
+                                name: "max_lookback_days",
+                                selector: {number: {min: 1, step: 1, unit_of_measurement: "days", mode: "box"}},
+                            },
+                            {
+                                name: "min_activity_distance_m",
+                                selector: {number: {min: 1, step: 1, unit_of_measurement: "m", mode: "box"}},
+                            },
+                        ],
+                    },
+                    {
+                        name: "last_activity_cache_ttl",
                         selector: {number: {min: 0, step: 1, unit_of_measurement: "sec", mode: "box"}},
                     },
                 ],

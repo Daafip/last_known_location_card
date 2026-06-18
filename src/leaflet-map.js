@@ -3,7 +3,7 @@ import {getTrackColor} from "./utils.js";
 
 const DEFAULT_ZOOM = 13;
 
-export class TimelineLeafletMap {
+export class LocationLeafletMap {
     constructor(mapElement, homeZoneCenter = null) {
         if (!mapElement?.isConnected) {
             throw new Error("Cannot setup Leaflet map on disconnected element");
@@ -130,6 +130,10 @@ export class TimelineLeafletMap {
     fitMap(bounds = null) {
         if (bounds === null) {
             bounds = this._fullDayPath?.points?.map((point) => point.point) || [];
+            // Always keep the current/last-known marker in view alongside the path.
+            if (Array.isArray(this._currentLocations)) {
+                bounds = bounds.concat(this._currentLocations.map((location) => location.point));
+            }
         }
         if (!bounds.length) {
             if (this._homeZoneCenter) this._leafletMap.setView(this._homeZoneCenter, DEFAULT_ZOOM);
@@ -224,27 +228,18 @@ export class TimelineLeafletMap {
     }
 
     _drawCurrentLocationMarkers() {
-        let markerGroup = Leaflet.layerGroup();
-        if (this._currentLocations.length === 1) {
+        const markerGroup = Leaflet.layerGroup();
+        this._currentLocations.forEach((location) => {
+            if (!location?.point) return;
+            const icon = createEntityIcon(location);
+            const zIndexOffset = location.isActive ? 1500 : 1000;
             markerGroup.addLayer(
-                this._Leaflet.marker(this._currentLocations[0].point, {
-                    icon: createDefaultCurrentLocationIcon(),
-                    zIndexOffset: 1000,
+                this._Leaflet.marker(location.point, {
+                    icon,
+                    zIndexOffset: zIndexOffset,
                 }),
             );
-        } else {
-            this._currentLocations.forEach((location, index) => {
-                if (!location?.point) return;
-                const icon = createEntityIcon(location);
-                const zIndexOffset = location.isActive ? 1500 : 1000;
-                markerGroup.addLayer(
-                    this._Leaflet.marker(location.point, {
-                        icon,
-                        zIndexOffset: zIndexOffset,
-                    }),
-                );
-            });
-        }
+        });
         this._mapLayers.push(markerGroup);
     }
 }
@@ -278,6 +273,13 @@ function createEntityIcon(location) {
         icon.src = location.picture;
         icon.alt = location.name;
         icon.setAttribute("style", "height: 42px; width: 42px; border-radius: 50%; object-fit: cover;");
+    } else if (location.icon) {
+        icon = document.createElement("ha-icon");
+        icon.setAttribute("icon", location.icon);
+        icon.setAttribute(
+            "style",
+            "color: white; --mdc-icon-size: 24px; height: 42px; width: 42px; display: flex; align-items: center; justify-content: center;",
+        );
     } else {
         const getAbbreviation = (name) => {
             const words = name.split(" ");
@@ -304,27 +306,6 @@ function createEntityIcon(location) {
         html: iconDiv,
         className: "my-leaflet-icon",
         iconSize: [48, 48],
-    });
-}
-
-function createDefaultCurrentLocationIcon() {
-    const innerDot = document.createElement("div");
-    innerDot.setAttribute(
-        "style",
-        "height: 14px; width: 14px; border-radius: 50%; background: #1a73e8; border: 3px solid white; box-shadow: 0 1px 6px #0006;",
-    );
-
-    const iconDiv = document.createElement("div");
-    iconDiv.appendChild(innerDot);
-    iconDiv.setAttribute(
-        "style",
-        "height: 20px; width: 20px; display: flex; align-items: center; justify-content: center;",
-    );
-
-    return Leaflet.divIcon({
-        html: iconDiv,
-        className: "my-leaflet-icon",
-        iconSize: [20, 20],
     });
 }
 
