@@ -473,6 +473,7 @@ class LastKnownLocationCard extends HTMLElement {
 
         try {
             const tracks = Array.isArray(dayData.tracks) ? dayData.tracks : [];
+            this._mapView._hass = this._hass;
             if (!this._config.hide_current_location) {
                 this._mapView._currentLocations = this._getCurrentEntityLocations();
             }
@@ -607,7 +608,7 @@ class LastKnownLocationCard extends HTMLElement {
                 return {
                     point: [lat, lon],
                     picture: state?.attributes?.entity_picture || null,
-                    icon: state?.attributes?.icon || null,
+                    stateObj: state || null,
                     name: state?.attributes?.friendly_name || entityId,
                     color: getTrackColor(index, this._config?.colors, this._config.entity[index]?.color),
                     isActive: index === this._activeEntityIndex,
