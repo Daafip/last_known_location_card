@@ -95,6 +95,33 @@ export function getConfigFormSchema() {
                     },
                 ],
             },
+            {
+                type: "expandable",
+                name: "",
+                title: "Last activity search",
+                flatten: true,
+                schema: [
+                    {
+                        type: "grid",
+                        name: "",
+                        flatten: true,
+                        schema: [
+                            {
+                                name: "max_lookback_days",
+                                selector: {number: {min: 1, step: 1, unit_of_measurement: "days", mode: "box"}},
+                            },
+                            {
+                                name: "min_activity_distance_m",
+                                selector: {number: {min: 1, step: 1, unit_of_measurement: "m", mode: "box"}},
+                            },
+                        ],
+                    },
+                    {
+                        name: "last_activity_cache_ttl",
+                        selector: {number: {min: 0, step: 1, unit_of_measurement: "sec", mode: "box"}},
+                    },
+                ],
+            },
         ],
         assertConfig: (config) => {
             const entities = Array.isArray(config.entity) ? config.entity : [];

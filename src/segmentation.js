@@ -278,11 +278,14 @@ function addDays(date, days) {
 }
 
 // Query a single time window once per entity and return the most recent day
-// within it on which any entity moved (or null). Days are grouped locally so a
-// wide window costs the same single round-trip as a narrow one.
+// within it on which any entity moved, plus that day's raw states per entity so
+// the caller can render it without re-fetching. Returns null if nothing moved.
+// Days are grouped locally so a wide window costs the same single round-trip as
+// a narrow one.
 async function findMovingDayInWindow(hass, ids, windowStart, windowEnd, thresholdMeters) {
     const startMs = windowStart.getTime();
     const endMs = windowEnd.getTime();
+    const statesByEntity = new Map();
     let best = null;
 
     for (const entityId of ids) {
@@ -297,6 +300,7 @@ async function findMovingDayInWindow(hass, ids, windowStart, windowEnd, threshol
         };
         const response = await callWS(hass, message);
         const states = extractEntityStates(response, entityId);
+        statesByEntity.set(entityId, states);
 
         const pointsByDay = new Map();
         for (const state of states) {
@@ -319,13 +323,28 @@ async function findMovingDayInWindow(hass, ids, windowStart, windowEnd, threshol
         }
     }
 
-    return best === null ? null : new Date(best);
+    if (best === null) return null;
+
+    // Hand back just the found day's states per entity so getSegmentedTracks can
+    // reuse them instead of issuing a second history query for the same day.
+    const dayStart = best;
+    const dayEnd = endOfDay(new Date(best)).getTime();
+    const prefetched = {};
+    for (const [entityId, states] of statesByEntity) {
+        prefetched[entityId] = states.filter((state) => {
+            const ts = state.lu * 1000;
+            return ts >= dayStart && ts <= dayEnd;
+        });
+    }
+
+    return {date: new Date(best), statesByEntity: prefetched};
 }
 
 /**
  * Find the most recent day (within `maxLookbackDays` of `fromDate`) on which any
  * tracked entity actually moved — i.e. recorded location points spanning more
- * than `thresholdMeters`. Returns null if none is found.
+ * than `thresholdMeters`. Returns `{date, statesByEntity}` (the found day plus
+ * its raw states per entity), or null if none is found.
  *
  * Uses recorded history rather than the entity's current `last_updated`, which
  * keeps changing (battery/accuracy/connectivity) even when the device hasn't
@@ -358,14 +377,14 @@ export async function findLastActivityDate(hass, entityIds, fromDate, maxLookbac
     return null;
 }
 
-export async function getSegmentedTracks(date, config, hass) {
+export async function getSegmentedTracks(date, config, hass, prefetchedStatesByEntity = null) {
     const entityEntries = config.entity;
     const zones = collectZones(hass);
 
     return await Promise.all(
         entityEntries.map(async (entry) => {
             const entityId = entry.entity;
-            const rawStates = await fetchEntityHistory(hass, entityId, date);
+            const rawStates = prefetchedStatesByEntity?.[entityId] ?? (await fetchEntityHistory(hass, entityId, date));
             const rawPoints = rawStates.map((state) => toPoint(state)).filter(Boolean).filter((p) => p.lat !== 0 || p.lon !== 0);
             const points = filterSpeedOutliers(rawPoints, config.max_reasonable_speed_kmh);
 

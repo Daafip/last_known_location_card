@@ -192,10 +192,10 @@ class LastKnownLocationCard extends HTMLElement {
         this._rendered = true;
 
         return this._resolveLastActivityDate()
-            .then((date) => {
+            .then(({date, statesByEntity}) => {
                 this._selectedDate = date;
                 this._resetMapFitMode();
-                return this._ensureDay(this._selectedDate);
+                return this._ensureDay(this._selectedDate, statesByEntity);
             })
             .then(() => this._render())
             .catch((err) => {
@@ -247,7 +247,7 @@ class LastKnownLocationCard extends HTMLElement {
     async _resolveLastActivityDate(force = false) {
         const todayStart = startOfDay(new Date());
         const entityIds = this._config.entity.map((entry) => entry.entity).filter(Boolean);
-        if (!this._hass || !entityIds.length) return todayStart;
+        if (!this._hass || !entityIds.length) return {date: todayStart, statesByEntity: null};
 
         if (!force) {
             const cached = this._readActivityCache();
@@ -260,7 +260,7 @@ class LastKnownLocationCard extends HTMLElement {
                         formatDate(cached),
                     );
                 }
-                return cached;
+                return {date: cached, statesByEntity: null};
             }
         }
 
@@ -283,7 +283,7 @@ class LastKnownLocationCard extends HTMLElement {
         } catch (err) {
             console.warn("Last known location card: history lookback failed", err);
         }
-        const resolved = found || startDay;
+        const resolved = found ? found.date : startDay;
         this._lookbackExhausted = found === null;
         if (this._lookbackExhausted) {
             console.warn(
@@ -299,7 +299,7 @@ class LastKnownLocationCard extends HTMLElement {
                 formatDate(resolved),
             );
         }
-        return resolved;
+        return {date: resolved, statesByEntity: found ? found.statesByEntity : null};
     }
 
     _resetMapFitMode() {
@@ -316,17 +316,34 @@ class LastKnownLocationCard extends HTMLElement {
         this._ensureDay(this._selectedDate).then(() => this._render());
     }
 
+    // Periodic tick while the dashboard is open. Instead of re-running the full
+    // backward search, only scan forward from the currently shown day to today
+    // for newer movement (one window query); if none, just refresh today's points.
     _refresh() {
-        this._resolveLastActivityDate(true).then((latest) => {
-            if (formatDate(latest) !== formatDate(this._selectedDate)) {
-                this._selectedDate = latest;
-                this._resetMapFitMode();
-                this._cache.delete(formatDate(latest));
-                this._ensureDay(this._selectedDate).then(() => this._render());
-            } else {
+        const entityIds = this._config.entity.map((entry) => entry.entity).filter(Boolean);
+        if (!this._hass || !entityIds.length) return;
+
+        const todayStart = startOfDay(new Date());
+        const daysForward = Math.max(0, Math.round((todayStart.getTime() - this._selectedDate.getTime()) / 86400000));
+        const threshold = Number(this._config.min_activity_distance_m) || 100;
+
+        findLastActivityDate(this._hass, entityIds, todayStart, daysForward, threshold)
+            .then((found) => {
+                if (found && formatDate(found.date) !== formatDate(this._selectedDate)) {
+                    this._selectedDate = found.date;
+                    this._lookbackExhausted = false;
+                    this._resetMapFitMode();
+                    this._writeActivityCache(found.date);
+                    this._cache.delete(formatDate(found.date));
+                    this._ensureDay(this._selectedDate, found.statesByEntity).then(() => this._render());
+                } else {
+                    this._refreshCurrentDay();
+                }
+            })
+            .catch((err) => {
+                console.warn("Last known location card: refresh failed", err);
                 this._refreshCurrentDay();
-            }
-        });
+            });
     }
 
     _logCacheToConsole() {
@@ -511,7 +528,7 @@ class LastKnownLocationCard extends HTMLElement {
     }
 
     // Functions
-    async _ensureDay(date) {
+    async _ensureDay(date, prefetchedStatesByEntity = null) {
         const key = formatDate(date);
         const existing = this._cache.get(key);
         if (existing && (existing.tracks || existing.loading)) return;
@@ -519,7 +536,7 @@ class LastKnownLocationCard extends HTMLElement {
         this._cache.set(key, {loading: true, tracks: null, error: null});
 
         try {
-            const tracks = await getSegmentedTracks(date, this._config, this._hass);
+            const tracks = await getSegmentedTracks(date, this._config, this._hass, prefetchedStatesByEntity);
             this._cache.set(key, {loading: false, tracks, error: null});
         } catch (err) {
             console.warn("Last known location card: history fetch failed", err);
