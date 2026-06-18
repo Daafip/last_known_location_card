@@ -231,7 +231,7 @@ export class LocationLeafletMap {
         const markerGroup = Leaflet.layerGroup();
         this._currentLocations.forEach((location) => {
             if (!location?.point) return;
-            const icon = createEntityIcon(location);
+            const icon = createEntityIcon(location, this._hass);
             const zIndexOffset = location.isActive ? 1500 : 1000;
             markerGroup.addLayer(
                 this._Leaflet.marker(location.point, {
@@ -266,20 +266,26 @@ function createMarkerIcon(options) {
     });
 }
 
-function createEntityIcon(location) {
+function createEntityIcon(location, hass) {
+    const iconStyle =
+        "color: white; --mdc-icon-size: 24px; height: 42px; width: 42px; display: flex; align-items: center; justify-content: center;";
     let icon;
     if (location.picture) {
         icon = document.createElement("img");
         icon.src = location.picture;
         icon.alt = location.name;
         icon.setAttribute("style", "height: 42px; width: 42px; border-radius: 50%; object-fit: cover;");
+    } else if (hass && location.stateObj) {
+        // Render the entity's actual icon the way Home Assistant resolves it
+        // (custom icon → entity-registry icon → device_class/domain default).
+        icon = document.createElement("ha-state-icon");
+        icon.hass = hass;
+        icon.stateObj = location.stateObj;
+        icon.setAttribute("style", iconStyle);
     } else if (location.icon) {
         icon = document.createElement("ha-icon");
         icon.setAttribute("icon", location.icon);
-        icon.setAttribute(
-            "style",
-            "color: white; --mdc-icon-size: 24px; height: 42px; width: 42px; display: flex; align-items: center; justify-content: center;",
-        );
+        icon.setAttribute("style", iconStyle);
     } else {
         const getAbbreviation = (name) => {
             const words = name.split(" ");

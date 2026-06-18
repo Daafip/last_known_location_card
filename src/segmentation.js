@@ -1,5 +1,4 @@
 import {endOfDay, haversineMeters, startOfDay, toLatLon, toPoint} from "./utils.js";
-import {resolveActivities} from "./activity.js";
 
 export function segmentTimeline(points, config, zones) {
     if (!Array.isArray(points) || points.length === 0) return [];
@@ -388,12 +387,8 @@ export async function getSegmentedTracks(date, config, hass, prefetchedStatesByE
             const rawPoints = rawStates.map((state) => toPoint(state)).filter(Boolean).filter((p) => p.lat !== 0 || p.lon !== 0);
             const points = filterSpeedOutliers(rawPoints, config.max_reasonable_speed_kmh);
 
-            const activityEntityId = entry.activity_entity || null;
-            const activityStates = activityEntityId ? await fetchEntityHistory(hass, activityEntityId, date) : [];
-
-            const baseSegments = segmentTimeline(points, config, zones);
-            const segments = resolveActivities(baseSegments, activityStates, date, config.activity_icon_map, zones);
-            return {entityId, activityEntityId, points, segments};
+            const segments = segmentTimeline(points, config, zones);
+            return {entityId, points, segments};
         }),
     );
 }
