@@ -10,11 +10,9 @@ import {
     normalizeEntityEntries,
     normalizeList,
     startOfDay,
-    toLatLon,
 } from "./utils.js";
 import {TimelineLeafletMap} from "./leaflet-map.js";
 import {clearPersistentCache} from "./reverse-geocoding.js";
-import {renderTimeline} from "./timeline.js";
 import {getConfigFormSchema} from "./config-flow.js";
 import {localize} from "./localize/localize.js";
 
@@ -39,7 +37,29 @@ const DEFAULT_CONFIG = {
     update_interval: 300,
     max_lookback_days: 90,
     min_activity_distance_m: 100,
+    last_activity_cache_ttl: 3600,
 };
+
+// Persist the resolved last-activity date across frontend reloads so a fresh
+// card doesn't have to re-run the history search every time the page loads.
+const ACTIVITY_CACHE_STORAGE_KEY = "lklc_last_activity_v1";
+
+function readActivityCacheStore() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(ACTIVITY_CACHE_STORAGE_KEY));
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeActivityCacheStore(store) {
+    try {
+        localStorage.setItem(ACTIVITY_CACHE_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+        // ignore storage errors (private mode, quota, etc.)
+    }
+}
 
 class TimelineCard extends HTMLElement {
     constructor() {
@@ -52,7 +72,6 @@ class TimelineCard extends HTMLElement {
         this._rendered = false;
         this._touchStart = null;
         this._activeEntityIndex = 0;
-        this._timelineCollapsed = false;
         this._updateIntervalId = null;
         this._dateInitialized = false;
         this._resetMapFitMode();
@@ -70,7 +89,6 @@ class TimelineCard extends HTMLElement {
         }
 
         this._activeEntityIndex = 0;
-        this._timelineCollapsed = Boolean(this._config.collapse_timeline);
         this._dateInitialized = false;
         this._selectedDate = startOfDay(new Date());
         this._resetMapFitMode();
@@ -187,14 +205,60 @@ class TimelineCard extends HTMLElement {
             });
     }
 
+    _activityCacheKey() {
+        const ids = this._config.entity
+            .map((entry) => entry.entity)
+            .filter(Boolean)
+            .sort()
+            .join(",");
+        const threshold = Number(this._config.min_activity_distance_m) || 100;
+        const lookback = Number(this._config.max_lookback_days) || 90;
+        return `${ids}|${threshold}|${lookback}`;
+    }
+
+    _readActivityCache() {
+        const ttl = Number(this._config.last_activity_cache_ttl);
+        if (!(ttl > 0)) return null;
+        const entry = readActivityCacheStore()[this._activityCacheKey()];
+        if (!entry || !entry.date || !entry.ts) return null;
+        if (Date.now() - entry.ts > ttl * 1000) return null;
+        const date = startOfDay(new Date(`${entry.date}T00:00:00`));
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    _writeActivityCache(date) {
+        if (!(Number(this._config.last_activity_cache_ttl) > 0)) return;
+        const store = readActivityCacheStore();
+        store[this._activityCacheKey()] = {date: formatDate(date), ts: Date.now()};
+        writeActivityCacheStore(store);
+    }
+
     // Search recorded history backward for the most recent day the entity
     // actually logged a location. We start the search at the entity's last
     // reported day (so an offline device resolves in a single query) rather
     // than trusting `last_updated`, which keeps churning even with no new fix.
-    async _resolveLastActivityDate() {
+    //
+    // The result is persisted to localStorage so a frontend reload reuses it
+    // instead of re-running the search. Pass force=true (the periodic refresh)
+    // to bypass the cache and re-scan.
+    async _resolveLastActivityDate(force = false) {
         const todayStart = startOfDay(new Date());
         const entityIds = this._config.entity.map((entry) => entry.entity).filter(Boolean);
         if (!this._hass || !entityIds.length) return todayStart;
+
+        if (!force) {
+            const cached = this._readActivityCache();
+            if (cached) {
+                if (this._config.debug) {
+                    console.log(
+                        "%c[Last Known Location] using cached last-activity date:",
+                        "color: white; background-color: #03a9f4; font-weight: bold;",
+                        formatDate(cached),
+                    );
+                }
+                return cached;
+            }
+        }
 
         let startDay = null;
         for (const entityId of entityIds) {
@@ -215,14 +279,16 @@ class TimelineCard extends HTMLElement {
         } catch (err) {
             console.warn("Last known location card: history lookback failed", err);
         }
+        const resolved = found || startDay;
+        this._writeActivityCache(resolved);
         if (this._config.debug) {
             console.log(
                 "%c[Last Known Location] resolved last-activity date:",
                 "color: white; background-color: #03a9f4; font-weight: bold;",
-                formatDate(found || startDay),
+                formatDate(resolved),
             );
         }
-        return found || startDay;
+        return resolved;
     }
 
     _resetMapFitMode() {
@@ -240,7 +306,7 @@ class TimelineCard extends HTMLElement {
     }
 
     _refresh() {
-        this._resolveLastActivityDate().then((latest) => {
+        this._resolveLastActivityDate(true).then((latest) => {
             if (formatDate(latest) !== formatDate(this._selectedDate)) {
                 this._selectedDate = latest;
                 this._resetMapFitMode();
@@ -290,19 +356,17 @@ class TimelineCard extends HTMLElement {
         this._applyMapHeight();
 
         this._updateMapFitButton();
-        this._updateCollapseButtons();
 
-        const activeEntityColor = getTrackColor(
-            this._activeEntityIndex,
-            this._config?.colors,
-            this._config?.entity?.[this._activeEntityIndex]?.color,
-        );
-        if (this._config.timeline_use_entity_color) {
-            this.shadowRoot.querySelector(".card")?.style.setProperty("--timeline-color", activeEntityColor);
+        const status = this.shadowRoot.getElementById("card-status");
+        if (status) {
+            if (dayData.error) {
+                status.innerHTML = `<div class="error">${dayData.error}</div>`;
+            } else if (dayData.loading) {
+                status.innerHTML = `<div class="loading">${localize("card.timeline.loading")}</div>`;
+            } else {
+                status.innerHTML = "";
+            }
         }
-
-        const activeDayData = this._getCurrentTrackDayData(dayData);
-        this.shadowRoot.getElementById("timeline-body").innerHTML = this._renderTimelineContent(activeDayData);
 
         this._attachMapCard();
         this._rendered = true;
@@ -320,25 +384,15 @@ class TimelineCard extends HTMLElement {
               <div class="map-wrap">
                 <div id="overview-map"></div>
                 <ha-icon-button id="map-fit-mode" class="map-reset" data-action="update-map-fit-mode"><ha-icon></ha-icon></ha-icon-button>
-                <ha-icon-button id="timeline-collapse-map" class="map-reset map-reset-left" data-action="toggle-timeline-collapse" hidden>
-                  <ha-icon></ha-icon>
-                </ha-icon-button>
               </div>
               <div class="selector-row" id="selector-row" hidden>
-                <ha-icon-button id="timeline-collapse-selector" class="selector-collapse" data-action="toggle-timeline-collapse">
-                  <ha-icon></ha-icon>
-                </ha-icon-button>
                 <div id="entity-selector" class="entity-selector"></div>
               </div>
-              <div id="timeline-section" class="timeline-section">
-                <div class="timeline-content">
-                <div class="header my-header">
-                  <span id="timeline-date" class="date"></span>
-                  ${this._config.debug ? `<ha-icon-button class="nav-button" data-action="debug" label="${localize("card.labels.debug")}"><ha-icon icon="mdi:bug"></ha-icon></ha-icon-button>` : ""}
-                </div>
-                <div id="timeline-body" class="body"></div>
-                </div>
+              <div class="header my-header">
+                <span id="timeline-date" class="date"></span>
+                ${this._config.debug ? `<ha-icon-button class="nav-button" data-action="debug" label="${localize("card.labels.debug")}"><ha-icon icon="mdi:bug"></ha-icon></ha-icon-button>` : ""}
               </div>
+              <div id="card-status"></div>
             </div>
           </ha-card>
         `;
@@ -445,48 +499,6 @@ class TimelineCard extends HTMLElement {
             })
             .join("");
         selector.toggleAttribute("hidden", this._config.entity.length < 2);
-        this._updateCollapseButtons();
-    }
-
-    _updateCollapseButtons() {
-        const selectorCollapseBtn = this.shadowRoot?.getElementById("timeline-collapse-selector");
-        const mapCollapseBtn = this.shadowRoot?.getElementById("timeline-collapse-map");
-        const timelineSection = this.shadowRoot?.getElementById("timeline-section");
-        if (!selectorCollapseBtn || !mapCollapseBtn || !timelineSection) return;
-
-        const useSelectorButton = this._config.entity.length > 1;
-        const useMapButton = this._config.entity.length < 2;
-        const icon = this._timelineCollapsed ? "mdi:chevron-down" : "mdi:chevron-up";
-        const label = this._timelineCollapsed ? "Expand timeline" : "Collapse timeline";
-
-        selectorCollapseBtn.toggleAttribute("hidden", !useSelectorButton);
-        mapCollapseBtn.toggleAttribute("hidden", !useMapButton);
-
-        selectorCollapseBtn.querySelector("ha-icon")?.setAttribute("icon", icon);
-        mapCollapseBtn.querySelector("ha-icon")?.setAttribute("icon", icon);
-        selectorCollapseBtn.setAttribute("label", label);
-        mapCollapseBtn.setAttribute("label", label);
-
-        timelineSection.classList.toggle("collapsed", this._timelineCollapsed);
-    }
-
-    _renderTimelineContent(dayData) {
-        if (dayData.loading || dayData.error) {
-            const errorHtml = dayData.error ? `<div class="error">${dayData.error}</div>` : "";
-            const loadingHtml = dayData.loading
-                ? `<div class="loading">${localize("card.timeline.loading")}</div>`
-                : "";
-            return `${errorHtml}${loadingHtml}`;
-        }
-
-        try {
-            return renderTimeline(dayData.segments, this._hass?.locale, this._config);
-        } catch (err) {
-            const message = formatErrorMessage(err);
-            console.warn("Timeline card: timeline render failed", err);
-            this._setCurrentDayError(err);
-            return `<div class="error">${message}</div>`;
-        }
     }
 
     // Functions
@@ -516,20 +528,6 @@ class TimelineCard extends HTMLElement {
 
     _getCurrentDayData() {
         return this._cache.get(formatDate(this._selectedDate));
-    }
-
-    _getCurrentTrackDayData(dayData = this._getCurrentDayData()) {
-        const tracks = Array.isArray(dayData?.tracks) ? dayData.tracks : [];
-        const index = Math.min(this._activeEntityIndex, Math.max(0, tracks.length - 1));
-        this._activeEntityIndex = index;
-        return (
-            tracks[index] || {
-                segments: [],
-                points: [],
-                entityId: null,
-                placeEntityId: null,
-            }
-        );
     }
 
     _setActiveEntityIndex(index) {
@@ -622,73 +620,8 @@ class TimelineCard extends HTMLElement {
                 this._logCacheToConsole();
             } else if (action === "select-entity") {
                 this._setActiveEntityIndex(Number(target.dataset.entityIndex));
-            } else if (action === "toggle-timeline-collapse") {
-                this._timelineCollapsed = !this._timelineCollapsed;
-                this._updateCollapseButtons();
             }
         });
-
-        this.shadowRoot.addEventListener("mouseover", (e) =>
-            this._onSegmentEvent(e, (idx) => this._handleSegmentHoverStart(idx)),
-        );
-        this.shadowRoot.addEventListener("mouseout", (e) =>
-            this._onSegmentEvent(e, (idx) => this._clearHoverHighlight(idx)),
-        );
-        this.shadowRoot.addEventListener("click", (e) =>
-            this._onSegmentEvent(e, (idx) => this._handleSegmentClick(idx)),
-        );
-    }
-
-    _onSegmentEvent(e, callback) {
-        const entry = e.target.closest("[data-segment-index]");
-        if (!entry || !this.shadowRoot.contains(entry)) return;
-        if (entry.contains(e.relatedTarget)) return;
-        callback(Number(entry.dataset.segmentIndex));
-    }
-
-    _handleSegmentHoverStart(segmentIndex) {
-        if (!Number.isInteger(segmentIndex)) return;
-        const dayData = this._getCurrentDayData();
-        const track = this._getCurrentTrackDayData(dayData);
-        if (!track || !Array.isArray(track.segments)) return;
-
-        const segment = track.segments[segmentIndex];
-        if (!segment || !this._mapView) return;
-
-        const segments = Array.isArray(track.segments) ? track.segments : [];
-        this._touchStart = null;
-        this._mapView.highlightSegment(segment, segments);
-    }
-
-    _clearHoverHighlight() {
-        if (!this._mapView) return;
-        const dayData = this._getCurrentDayData();
-        const track = this._getCurrentTrackDayData(dayData);
-        const segments = Array.isArray(track?.segments) ? track.segments : [];
-        this._touchStart = null;
-        this._mapView.clearHighlight(segments);
-    }
-
-    _handleSegmentClick(segmentIndex) {
-        if (!Number.isInteger(segmentIndex)) return;
-        const dayData = this._getCurrentDayData();
-        const track = this._getCurrentTrackDayData(dayData);
-        if (!track || !Array.isArray(track.segments)) return;
-
-        const segment = track.segments[segmentIndex];
-        if (!segment) return;
-
-        this._mapFitMode = "segment";
-        this._updateMapFitButton();
-        if (segment.type === "stay") {
-            this._mapView?.fitMap([segment.center]);
-        } else if (segment.type === "move") {
-            const segmentPoints = track.points.filter(
-                (point) => point.timestamp >= segment.start && point.timestamp <= segment.end,
-            );
-            if (segmentPoints.length < 2) return;
-            this._mapView?.fitMap(segmentPoints.map(toLatLon));
-        }
     }
 }
 

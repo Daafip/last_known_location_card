@@ -264,20 +264,6 @@ function extractEntityStates(response, entityId) {
     return response.filter((state) => state.entity_id === entityId);
 }
 
-function dayInRangePoints(states, dayStart, dayEnd) {
-    const points = [];
-    for (const state of states) {
-        const timestamp = state.lu * 1000;
-        if (timestamp < dayStart || timestamp > dayEnd) continue;
-        const lat = Number(state.a?.latitude);
-        const lon = Number(state.a?.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-        if (lat === 0 && lon === 0) continue;
-        points.push({lat, lon});
-    }
-    return points;
-}
-
 // A day counts as "activity" only if the entity actually moved that day. A
 // stationary device that keeps re-recording the same coordinates (because some
 // other attribute churns) does NOT count — otherwise every day would look
@@ -288,42 +274,88 @@ function dayHasMovement(points, thresholdMeters) {
     return points.some((point) => haversineMeters(first, point) > thresholdMeters);
 }
 
+function addDays(date, days) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+// Query a single time window once per entity and return the most recent day
+// within it on which any entity moved (or null). Days are grouped locally so a
+// wide window costs the same single round-trip as a narrow one.
+async function findMovingDayInWindow(hass, ids, windowStart, windowEnd, thresholdMeters) {
+    const startMs = windowStart.getTime();
+    const endMs = windowEnd.getTime();
+    let best = null;
+
+    for (const entityId of ids) {
+        const message = {
+            type: "history/history_during_period",
+            start_time: windowStart.toISOString(),
+            end_time: windowEnd.toISOString(),
+            entity_ids: [entityId],
+            minimal_response: false,
+            no_attributes: false,
+            significant_changes_only: false,
+        };
+        const response = await callWS(hass, message);
+        const states = extractEntityStates(response, entityId);
+
+        const pointsByDay = new Map();
+        for (const state of states) {
+            const timestamp = state.lu * 1000;
+            if (timestamp < startMs || timestamp > endMs) continue;
+            const lat = Number(state.a?.latitude);
+            const lon = Number(state.a?.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+            if (lat === 0 && lon === 0) continue;
+            const dayKey = startOfDay(new Date(timestamp)).getTime();
+            if (!pointsByDay.has(dayKey)) pointsByDay.set(dayKey, []);
+            pointsByDay.get(dayKey).push({lat, lon});
+        }
+
+        for (const dayKey of [...pointsByDay.keys()].sort((a, b) => b - a)) {
+            if (dayHasMovement(pointsByDay.get(dayKey), thresholdMeters)) {
+                if (best === null || dayKey > best) best = dayKey;
+                break;
+            }
+        }
+    }
+
+    return best === null ? null : new Date(best);
+}
+
 /**
- * Walk backward from `fromDate` (at most `maxLookbackDays` days) and return the
- * most recent day on which any tracked entity actually moved (recorded location
- * points spanning more than `thresholdMeters`). Returns null if none is found.
+ * Find the most recent day (within `maxLookbackDays` of `fromDate`) on which any
+ * tracked entity actually moved — i.e. recorded location points spanning more
+ * than `thresholdMeters`. Returns null if none is found.
  *
- * This is based on recorded history rather than the entity's current
- * `last_updated`, which keeps changing (battery/accuracy/connectivity) even when
- * the device hasn't gone anywhere.
+ * Uses recorded history rather than the entity's current `last_updated`, which
+ * keeps changing (battery/accuracy/connectivity) even when the device hasn't
+ * gone anywhere.
+ *
+ * History is fetched in expanding day-aligned windows (newest first) so a device
+ * that moved recently resolves in a single round-trip, while a long-stale device
+ * still resolves in a handful instead of one request per day.
  */
 export async function findLastActivityDate(hass, entityIds, fromDate, maxLookbackDays = 90, thresholdMeters = 100) {
     const ids = (entityIds || []).filter(Boolean);
     if (!hass || !ids.length) return null;
 
-    for (let offset = 0; offset <= maxLookbackDays; offset += 1) {
-        const day = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate() - offset);
-        const dayStart = startOfDay(day);
-        const dayEnd = endOfDay(day);
+    const totalDays = maxLookbackDays + 1;
+    let covered = 0;
+    let span = 2;
 
-        for (const entityId of ids) {
-            const message = {
-                type: "history/history_during_period",
-                start_time: dayStart.toISOString(),
-                end_time: dayEnd.toISOString(),
-                entity_ids: [entityId],
-                minimal_response: false,
-                no_attributes: false,
-                significant_changes_only: false,
-            };
-            const response = await callWS(hass, message);
-            const states = extractEntityStates(response, entityId);
-            const points = dayInRangePoints(states, dayStart.getTime(), dayEnd.getTime());
-            if (dayHasMovement(points, thresholdMeters)) {
-                return dayStart;
-            }
-        }
+    while (covered < totalDays) {
+        const windowSpan = Math.min(span, totalDays - covered);
+        const windowEnd = endOfDay(addDays(fromDate, -covered));
+        const windowStart = startOfDay(addDays(fromDate, -(covered + windowSpan - 1)));
+
+        const found = await findMovingDayInWindow(hass, ids, windowStart, windowEnd, thresholdMeters);
+        if (found) return found;
+
+        covered += windowSpan;
+        span *= 3;
     }
+
     return null;
 }
 
