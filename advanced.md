@@ -20,7 +20,7 @@ Each item in the `entity` list can be a plain string (entity ID) or an object. T
 **Simple — all entities as strings (works in GUI and YAML):**
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity:
     - person.alice
     - person.bob
@@ -29,7 +29,7 @@ entity:
 **Object form — per-entity activity and places sensors:**
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity:
     - entity: person.alice
       activity_entity: sensor.alice_activity
@@ -44,7 +44,7 @@ entity:
 **Mixed — strings and objects together:**
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity:
     - person.alice
     - entity: person.bob
@@ -59,7 +59,7 @@ entity:
 This means you can mix both approaches:
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity:
     - entity: person.alice
       places_entity: sensor.places_alice
@@ -83,7 +83,7 @@ This is an object where keys are activity names (as reported by your activity se
 **Example:**
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity:
     - entity: person.alice
       activity_entity: sensor.alice_activity

@@ -9,7 +9,7 @@ export default [
         plugins: [nodeResolve({}), commonjs(), json(), css()],
         output: {
             format: "es",
-            file: "./dist/timeline_card.js",
+            file: "./dist/last_known_location_card.js",
             sourcemap: false,
         },
     },

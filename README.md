@@ -15,12 +15,12 @@ After installation, ensure the card resource is available in Lovelace (HACS norm
 
 ## Manual installation
 
-1. Download `timeline_card.js` from the latest GitHub Release.
-2. Copy it to your Home Assistant `www` folder, for example `/config/www/timeline_card.js`.
+1. Download `last_known_location_card.js` from the latest GitHub Release.
+2. Copy it to your Home Assistant `www` folder, for example `/config/www/last_known_location_card.js`.
 3. Add it as a dashboard resource:
 
 ```yaml
-url: /local/timeline_card.js
+url: /local/last_known_location_card.js
 type: module
 ```
 
@@ -33,6 +33,6 @@ Add the card in the Lovelace UI editor or with manual YAML.
 ### Minimal setup
 
 ```yaml
-type: custom:location-timeline-card
+type: custom:last-known-location-card
 entity: device_tracker.my_phone
 ```

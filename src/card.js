@@ -640,11 +640,11 @@ class TimelineCard extends HTMLElement {
     }
 }
 
-customElements.define("location-timeline-card", TimelineCard);
+customElements.define("last-known-location-card", TimelineCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-    type: "location-timeline-card",
-    name: "Location Timeline Card",
+    type: "last-known-location-card",
+    name: "Last Known Location Card",
     description: localize("card.description"),
 });

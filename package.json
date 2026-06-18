@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "module": "dist/timeline_card.js",
+  "module": "dist/last_known_location_card.js",
   "scripts": {
     "build": "rollup -c",
     "dev": "rollup -c -w"

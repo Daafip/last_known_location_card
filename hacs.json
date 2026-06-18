@@ -5,7 +5,7 @@
   "config_flow": false,
   "dependencies": [],
   "documentation": "https://github.com/Daafip/last_known_location_card",
-  "domain": "location-timeline-card",
+  "domain": "last-known-location-card",
   "issues": "https://github.com/Daafip/last_known_location_card/issues",
-  "filename": "timeline_card.js"
+  "filename": "last_known_location_card.js"
 }
