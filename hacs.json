@@ -1,11 +1,11 @@
 {
-  "name": "Location Timeline Card",
-  "description": "A custom location timeline card for Home Assistant",
-  "codeowners": ["@konewka17"],
+  "name": "Last Known Location  Card",
+  "description": "A custom last known location card for Home Assistant",
+  "codeowners": ["@Daafip"],
   "config_flow": false,
   "dependencies": [],
-  "documentation": "https://github.com/konewka17/timeline_card",
+  "documentation": "https://github.com/Daafip/last_known_location_card",
   "domain": "location-timeline-card",
-  "issues": "https://github.com/konewka17/timeline_card/issues",
+  "issues": "https://github.com/Daafip/last_known_location_card/issues",
   "filename": "timeline_card.js"
 }

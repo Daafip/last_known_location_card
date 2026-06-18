@@ -10,11 +10,10 @@ import {
     normalizeEntityEntries,
     normalizeList,
     startOfDay,
-    today,
     toLatLon,
 } from "./utils.js";
 import {TimelineLeafletMap} from "./leaflet-map.js";
-import {clearPersistentCache, clearReverseGeocodingQueue} from "./reverse-geocoding.js";
+import {clearPersistentCache} from "./reverse-geocoding.js";
 import {renderTimeline} from "./timeline.js";
 import {getConfigFormSchema} from "./config-flow.js";
 import {localize} from "./localize/localize.js";
@@ -53,6 +52,7 @@ class TimelineCard extends HTMLElement {
         this._activeEntityIndex = 0;
         this._timelineCollapsed = false;
         this._updateIntervalId = null;
+        this._dateInitialized = false;
         this._resetMapFitMode();
         this._addEventListeners();
     }
@@ -69,12 +69,16 @@ class TimelineCard extends HTMLElement {
 
         this._activeEntityIndex = 0;
         this._timelineCollapsed = Boolean(this._config.collapse_timeline);
+        this._dateInitialized = false;
         this._selectedDate = startOfDay(new Date());
         this._resetMapFitMode();
         this._setDarkMode();
         this._renderEntitySelector(true);
         this._applyMapHeight();
         if (this._hass) {
+            this._dateInitialized = true;
+            this._selectedDate = this._resolveLastActivityDate();
+            this._resetMapFitMode();
             this._ensureDay(this._selectedDate);
         }
         this._setupUpdateInterval();
@@ -88,6 +92,13 @@ class TimelineCard extends HTMLElement {
         this._renderEntitySelector();
         if (!this._config.entity) return;
         this._config.entity = normalizeEntityEntries(this._config, this._hass);
+
+        if (!this._dateInitialized && this._config.entity.length) {
+            this._dateInitialized = true;
+            this._selectedDate = this._resolveLastActivityDate();
+            this._resetMapFitMode();
+        }
+
         const dateKey = formatDate(this._selectedDate);
         if (!this._cache.has(dateKey)) {
             this._ensureDay(this._selectedDate);
@@ -148,19 +159,19 @@ class TimelineCard extends HTMLElement {
     }
 
     // Actions
-    _shiftDate(direction) {
-        clearReverseGeocodingQueue();
-
-        const today = startOfDay(new Date());
-        if (direction > 0 && this._selectedDate >= today) {
-            return;
+    _resolveLastActivityDate() {
+        let latest = null;
+        for (const {entity: entityId} of this._config.entity) {
+            const state = this._hass?.states?.[entityId];
+            const raw = state?.last_updated || state?.last_changed;
+            if (!raw) continue;
+            const timestamp = new Date(raw);
+            if (Number.isNaN(timestamp.getTime())) continue;
+            if (!latest || timestamp.getTime() > latest.getTime()) {
+                latest = timestamp;
+            }
         }
-
-        const next = new Date(this._selectedDate);
-        next.setDate(next.getDate() + direction);
-        this._selectedDate = startOfDay(next);
-        this._resetMapFitMode();
-        this._ensureDay(this._selectedDate).then(() => this._render());
+        return startOfDay(latest || new Date());
     }
 
     _resetMapFitMode() {
@@ -177,6 +188,18 @@ class TimelineCard extends HTMLElement {
         this._ensureDay(this._selectedDate).then(() => this._render());
     }
 
+    _refresh() {
+        const latest = this._resolveLastActivityDate();
+        if (formatDate(latest) !== formatDate(this._selectedDate)) {
+            this._selectedDate = latest;
+            this._resetMapFitMode();
+            this._cache.delete(formatDate(latest));
+            this._ensureDay(this._selectedDate).then(() => this._render());
+        } else {
+            this._refreshCurrentDay();
+        }
+    }
+
     _logCacheToConsole() {
         console.log("%c[Location Timeline Debug]", "color: white; background-color: #03a9f4; font-weight: bold;");
         console.log(JSON.stringify(this._cache.get(formatDate(this._selectedDate))));
@@ -191,9 +214,7 @@ class TimelineCard extends HTMLElement {
         const interval = Number(this._config.update_interval);
         if (interval > 0) {
             this._updateIntervalId = setInterval(() => {
-                if (isToday(this._selectedDate)) {
-                    this._refreshCurrentDay();
-                }
+                this._refresh();
             }, interval * 1000);
         }
     }
@@ -214,13 +235,6 @@ class TimelineCard extends HTMLElement {
             this._selectedDate,
             this._hass?.locale,
         );
-        const datePicker = this.shadowRoot.getElementById("timeline-date-picker");
-        datePicker.value = formatDate(this._selectedDate);
-        datePicker.max = formatDate(new Date());
-
-        this.shadowRoot
-            .querySelector("[data-action='next']")
-            .toggleAttribute("disabled", this._selectedDate >= today());
         this._applyMapHeight();
 
         this._updateMapFitButton();
@@ -267,21 +281,8 @@ class TimelineCard extends HTMLElement {
               <div id="timeline-section" class="timeline-section">
                 <div class="timeline-content">
                 <div class="header my-header">
-                  <div class="header-actions">
-                      <ha-icon-button class="nav-button" data-action="prev" label="${localize("card.labels.previous_day")}"><ha-icon icon="mdi:chevron-left"></ha-icon></ha-icon-button>
-                      ${this._config.debug ? `<ha-icon-button class="nav-button" data-action="debug" label="${localize("card.labels.debug")}"><ha-icon icon="mdi:bug"></ha-icon></ha-icon-button>` : ""}
-                  </div>
-                  <div class="date-wrap">
-                    <button class="date-trigger" data-action="open-date-picker" type="button" aria-label="${localize("card.labels.pick_date")}">
-                      <span id="timeline-date" class="date"></span>
-                      <ha-icon class="date-caret" icon="mdi:menu-down"></ha-icon>
-                    </button>
-                    <input id="timeline-date-picker" class="date-picker-input" type="date">
-                  </div>
-                  <div class="header-actions">
-                    <ha-icon-button class="nav-button" data-action="refresh" label="${localize("card.labels.refresh")}"><ha-icon icon="mdi:refresh"></ha-icon></ha-icon-button>
-                    <ha-icon-button class="nav-button" data-action="next" label="${localize("card.labels.next_day")}"><ha-icon icon="mdi:chevron-right"></ha-icon></ha-icon-button>
-                  </div>
+                  <span id="timeline-date" class="date"></span>
+                  ${this._config.debug ? `<ha-icon-button class="nav-button" data-action="debug" label="${localize("card.labels.debug")}"><ha-icon icon="mdi:bug"></ha-icon></ha-icon-button>` : ""}
                 </div>
                 <div id="timeline-body" class="body"></div>
                 </div>
@@ -289,20 +290,6 @@ class TimelineCard extends HTMLElement {
             </div>
           </ha-card>
         `;
-
-        const body = this.shadowRoot.getElementById("timeline-body");
-        this._bindTimelineTouch(body);
-    }
-
-    _openDatePicker() {
-        const input = this.shadowRoot?.getElementById("timeline-date-picker");
-        if (!input) return;
-        if (typeof input.showPicker === "function") {
-            input.showPicker();
-            return;
-        }
-        input.focus();
-        input.click();
     }
 
     _updateMapFitButton() {
@@ -577,34 +564,15 @@ class TimelineCard extends HTMLElement {
             const target = event.target.closest("[data-action]");
             if (!target) return;
             const action = target.dataset.action;
-            if (action === "prev") {
-                this._shiftDate(-1);
-            } else if (action === "next") {
-                this._shiftDate(1);
-            } else if (action === "refresh") {
-                this._refreshCurrentDay();
-            } else if (action === "update-map-fit-mode") {
+            if (action === "update-map-fit-mode") {
                 this._updateMapFitMode();
             } else if (action === "debug") {
                 this._logCacheToConsole();
-            } else if (action === "open-date-picker") {
-                this._openDatePicker();
             } else if (action === "select-entity") {
                 this._setActiveEntityIndex(Number(target.dataset.entityIndex));
             } else if (action === "toggle-timeline-collapse") {
                 this._timelineCollapsed = !this._timelineCollapsed;
                 this._updateCollapseButtons();
-            }
-        });
-
-        this.shadowRoot.addEventListener("change", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLInputElement) || target.id !== "timeline-date-picker" || !target.value) return;
-            const next = new Date(`${target.value}T00:00:00`);
-            if (!Number.isNaN(next.getTime())) {
-                this._selectedDate = startOfDay(next);
-                this._resetMapFitMode();
-                this._ensureDay(this._selectedDate).then(() => this._render());
             }
         });
 
@@ -669,40 +637,6 @@ class TimelineCard extends HTMLElement {
             if (segmentPoints.length < 2) return;
             this._mapView?.fitMap(segmentPoints.map(toLatLon));
         }
-    }
-
-    _bindTimelineTouch(body) {
-        if (!body || body.dataset.swipeBound === "true") return;
-        body.dataset.swipeBound = "true";
-
-        body.addEventListener(
-            "touchstart",
-            (event) => {
-                const touch = event.changedTouches?.[0];
-                if (!touch) return;
-                this._touchStart = {x: touch.clientX, y: touch.clientY};
-            },
-            {passive: true},
-        );
-
-        body.addEventListener(
-            "touchend",
-            (event) => {
-                const touch = event.changedTouches?.[0];
-                if (!touch || !this._touchStart) return;
-
-                const deltaX = touch.clientX - this._touchStart.x;
-                const deltaY = touch.clientY - this._touchStart.y;
-                this._touchStart = null;
-
-                if (Math.abs(deltaX) < 60 || Math.abs(deltaX) < Math.abs(deltaY)) {
-                    return;
-                }
-
-                this._shiftDate(deltaX > 0 ? -1 : 1);
-            },
-            {passive: true},
-        );
     }
 }
 
