@@ -104,9 +104,6 @@ export function normalizeEntityEntries(config) {
                 const entity = item.entity.trim();
                 if (!entity) return null;
                 const entry = {entity};
-                if (typeof item.activity_entity === "string" && item.activity_entity.trim()) {
-                    entry.activity_entity = item.activity_entity.trim();
-                }
                 if (typeof item.color === "string" && item.color.trim()) {
                     entry.color = item.color.trim();
                 }

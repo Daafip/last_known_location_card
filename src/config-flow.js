@@ -56,15 +56,6 @@ export function getConfigFormSchema() {
                     },
                     {name: "hide_current_location", selector: {boolean: {}}},
                     {name: "colors", selector: {text: {multiple: true}}},
-                    {
-                        name: "activity_icon_map",
-                        selector: {
-                            object: {
-                                keySchema: {selector: {text: {}}},
-                                valueSchema: {selector: {icon: {}}},
-                            },
-                        },
-                    },
                 ],
             },
             {

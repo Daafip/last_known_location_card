@@ -25,7 +25,6 @@ const DEFAULT_CONFIG = {
     colors: [],
     hide_current_location: false,
     debug: false,
-    activity_icon_map: {},
     update_interval: 300,
     max_lookback_days: 90,
     min_activity_distance_m: 100,
