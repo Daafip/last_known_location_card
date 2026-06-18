@@ -264,6 +264,69 @@ function extractEntityStates(response, entityId) {
     return response.filter((state) => state.entity_id === entityId);
 }
 
+function dayInRangePoints(states, dayStart, dayEnd) {
+    const points = [];
+    for (const state of states) {
+        const timestamp = state.lu * 1000;
+        if (timestamp < dayStart || timestamp > dayEnd) continue;
+        const lat = Number(state.a?.latitude);
+        const lon = Number(state.a?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        if (lat === 0 && lon === 0) continue;
+        points.push({lat, lon});
+    }
+    return points;
+}
+
+// A day counts as "activity" only if the entity actually moved that day. A
+// stationary device that keeps re-recording the same coordinates (because some
+// other attribute churns) does NOT count — otherwise every day would look
+// active and the search would never leave today.
+function dayHasMovement(points, thresholdMeters) {
+    if (points.length < 2) return false;
+    const first = points[0];
+    return points.some((point) => haversineMeters(first, point) > thresholdMeters);
+}
+
+/**
+ * Walk backward from `fromDate` (at most `maxLookbackDays` days) and return the
+ * most recent day on which any tracked entity actually moved (recorded location
+ * points spanning more than `thresholdMeters`). Returns null if none is found.
+ *
+ * This is based on recorded history rather than the entity's current
+ * `last_updated`, which keeps changing (battery/accuracy/connectivity) even when
+ * the device hasn't gone anywhere.
+ */
+export async function findLastActivityDate(hass, entityIds, fromDate, maxLookbackDays = 90, thresholdMeters = 100) {
+    const ids = (entityIds || []).filter(Boolean);
+    if (!hass || !ids.length) return null;
+
+    for (let offset = 0; offset <= maxLookbackDays; offset += 1) {
+        const day = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate() - offset);
+        const dayStart = startOfDay(day);
+        const dayEnd = endOfDay(day);
+
+        for (const entityId of ids) {
+            const message = {
+                type: "history/history_during_period",
+                start_time: dayStart.toISOString(),
+                end_time: dayEnd.toISOString(),
+                entity_ids: [entityId],
+                minimal_response: false,
+                no_attributes: false,
+                significant_changes_only: false,
+            };
+            const response = await callWS(hass, message);
+            const states = extractEntityStates(response, entityId);
+            const points = dayInRangePoints(states, dayStart.getTime(), dayEnd.getTime());
+            if (dayHasMovement(points, thresholdMeters)) {
+                return dayStart;
+            }
+        }
+    }
+    return null;
+}
+
 export async function getSegmentedTracks(date, config, hass, onQueueUpdate) {
     const entityEntries = config.entity;
     const zones = collectZones(hass);

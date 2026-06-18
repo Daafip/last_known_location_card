@@ -1,6 +1,6 @@
 import css from "./card.css";
 import leafletCss from "leaflet/dist/leaflet.css";
-import {getSegmentedTracks} from "./segmentation.js";
+import {findLastActivityDate, getSegmentedTracks} from "./segmentation.js";
 import {
     escapeHtml,
     formatDate,
@@ -37,6 +37,8 @@ const DEFAULT_CONFIG = {
     debug: false,
     activity_icon_map: {},
     update_interval: 300,
+    max_lookback_days: 90,
+    min_activity_distance_m: 100,
 };
 
 class TimelineCard extends HTMLElement {
@@ -75,14 +77,16 @@ class TimelineCard extends HTMLElement {
         this._setDarkMode();
         this._renderEntitySelector(true);
         this._applyMapHeight();
+        this._setupUpdateInterval();
         if (this._hass) {
             this._dateInitialized = true;
-            this._selectedDate = this._resolveLastActivityDate();
-            this._resetMapFitMode();
-            this._ensureDay(this._selectedDate);
+            this._dateInitializing = true;
+            this._initializeSelectedDate().finally(() => {
+                this._dateInitializing = false;
+            });
+        } else {
+            this._render();
         }
-        this._setupUpdateInterval();
-        this._render();
     }
 
     // noinspection JSUnusedGlobalSymbols
@@ -95,9 +99,14 @@ class TimelineCard extends HTMLElement {
 
         if (!this._dateInitialized && this._config.entity.length) {
             this._dateInitialized = true;
-            this._selectedDate = this._resolveLastActivityDate();
-            this._resetMapFitMode();
+            this._dateInitializing = true;
+            this._initializeSelectedDate().finally(() => {
+                this._dateInitializing = false;
+            });
+            return;
         }
+        // Skip intermediate fetches while the initial date search is in flight.
+        if (this._dateInitializing) return;
 
         const dateKey = formatDate(this._selectedDate);
         if (!this._cache.has(dateKey)) {
@@ -159,19 +168,61 @@ class TimelineCard extends HTMLElement {
     }
 
     // Actions
-    _resolveLastActivityDate() {
-        let latest = null;
-        for (const {entity: entityId} of this._config.entity) {
-            const state = this._hass?.states?.[entityId];
+    _initializeSelectedDate() {
+        // Render the base layout immediately so the user sees the card while we
+        // search history for the last day with real location data.
+        this._render();
+        this._rendered = true;
+
+        return this._resolveLastActivityDate()
+            .then((date) => {
+                this._selectedDate = date;
+                this._resetMapFitMode();
+                return this._ensureDay(this._selectedDate);
+            })
+            .then(() => this._render())
+            .catch((err) => {
+                console.warn("Last known location card: failed to resolve last activity date", err);
+                this._render();
+            });
+    }
+
+    // Search recorded history backward for the most recent day the entity
+    // actually logged a location. We start the search at the entity's last
+    // reported day (so an offline device resolves in a single query) rather
+    // than trusting `last_updated`, which keeps churning even with no new fix.
+    async _resolveLastActivityDate() {
+        const todayStart = startOfDay(new Date());
+        const entityIds = this._config.entity.map((entry) => entry.entity).filter(Boolean);
+        if (!this._hass || !entityIds.length) return todayStart;
+
+        let startDay = null;
+        for (const entityId of entityIds) {
+            const state = this._hass.states?.[entityId];
             const raw = state?.last_updated || state?.last_changed;
             if (!raw) continue;
-            const timestamp = new Date(raw);
-            if (Number.isNaN(timestamp.getTime())) continue;
-            if (!latest || timestamp.getTime() > latest.getTime()) {
-                latest = timestamp;
-            }
+            const day = startOfDay(new Date(raw));
+            if (Number.isNaN(day.getTime())) continue;
+            if (!startDay || day.getTime() > startDay.getTime()) startDay = day;
         }
-        return startOfDay(latest || new Date());
+        if (!startDay || startDay.getTime() > todayStart.getTime()) startDay = todayStart;
+
+        const maxLookback = Number(this._config.max_lookback_days) || 90;
+        const threshold = Number(this._config.min_activity_distance_m) || 100;
+        let found = null;
+        try {
+            found = await findLastActivityDate(this._hass, entityIds, startDay, maxLookback, threshold);
+        } catch (err) {
+            console.warn("Last known location card: history lookback failed", err);
+        }
+        if (this._config.debug) {
+            console.log(
+                "%c[Last Known Location] resolved last-activity date:",
+                "color: white; background-color: #03a9f4; font-weight: bold;",
+                formatDate(found || startDay),
+            );
+        }
+        return found || startDay;
     }
 
     _resetMapFitMode() {
@@ -189,15 +240,16 @@ class TimelineCard extends HTMLElement {
     }
 
     _refresh() {
-        const latest = this._resolveLastActivityDate();
-        if (formatDate(latest) !== formatDate(this._selectedDate)) {
-            this._selectedDate = latest;
-            this._resetMapFitMode();
-            this._cache.delete(formatDate(latest));
-            this._ensureDay(this._selectedDate).then(() => this._render());
-        } else {
-            this._refreshCurrentDay();
-        }
+        this._resolveLastActivityDate().then((latest) => {
+            if (formatDate(latest) !== formatDate(this._selectedDate)) {
+                this._selectedDate = latest;
+                this._resetMapFitMode();
+                this._cache.delete(formatDate(latest));
+                this._ensureDay(this._selectedDate).then(() => this._render());
+            } else {
+                this._refreshCurrentDay();
+            }
+        });
     }
 
     _logCacheToConsole() {
