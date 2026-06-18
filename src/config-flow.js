@@ -45,26 +45,10 @@ export function getConfigFormSchema() {
                 flatten: true,
                 schema: [
                     {
-                        type: "grid",
-                        name: "",
-                        flatten: true,
-                        schema: [
-                            {
-                                name: "distance_unit",
-                                selector: {
-                                    select: {options: ["metric", "imperial"], mode: "dropdown"},
-                                },
-                            },
-                            {
-                                name: "map_appearance",
-                                selector: {
-                                    select: {
-                                        options: ["auto", "light", "dark"],
-                                        mode: "dropdown",
-                                    },
-                                },
-                            },
-                        ],
+                        name: "map_appearance",
+                        selector: {
+                            select: {options: ["auto", "light", "dark"], mode: "dropdown"},
+                        },
                     },
                     {
                         name: "map_height_px",

@@ -22,7 +22,6 @@ const DEFAULT_CONFIG = {
     max_reasonable_speed_kmh: 300,
     map_appearance: "auto",
     map_height_px: 200,
-    distance_unit: "metric",
     colors: [],
     hide_current_location: false,
     debug: false,
@@ -159,9 +158,6 @@ class LastKnownLocationCard extends HTMLElement {
         this._config.colors = normalizeList(this._config.colors);
         if (this._config.entity.length === 0) {
             throw new Error("You need to define an entity");
-        }
-        if (!["metric", "imperial"].includes(this._config.distance_unit)) {
-            throw new Error("distance_unit must be either 'metric' or 'imperial'");
         }
         if (!["auto", "light", "dark"].includes(this._config.map_appearance)) {
             throw new Error("map_appearance must be one of 'auto', 'light', or 'dark'");
