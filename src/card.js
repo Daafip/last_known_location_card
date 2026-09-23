@@ -1,5 +1,6 @@
 import css from "./card.css";
 import leafletCss from "leaflet/dist/leaflet.css";
+import maplibreCss from "maplibre-gl/dist/maplibre-gl.css";
 import {findLastActivityDate, getSegmentedTracks} from "./segmentation.js";
 import {
     escapeHtml,
@@ -22,6 +23,8 @@ const DEFAULT_CONFIG = {
     max_reasonable_speed_kmh: 300,
     map_appearance: "auto",
     map_height_px: 200,
+    map_tile_url: null,
+    map_attribution: null,
     colors: [],
     hide_current_location: false,
     debug: false,
@@ -64,6 +67,7 @@ class LastKnownLocationCard extends HTMLElement {
         this._touchStart = null;
         this._activeEntityIndex = 0;
         this._updateIntervalId = null;
+        this._teardownTimeout = null;
         this._dateInitialized = false;
         this._lookbackExhausted = false;
         this._resetMapFitMode();
@@ -145,11 +149,31 @@ class LastKnownLocationCard extends HTMLElement {
     }
 
     // noinspection JSUnusedGlobalSymbols
+    connectedCallback() {
+        clearTimeout(this._teardownTimeout);
+        this._teardownTimeout = null;
+        if (!this._config.entity?.length) return;
+        this._setupUpdateInterval();
+        // The first render attaches the initial map.
+        if (this._rendered && !this._mapView) this._attachMapCard();
+    }
+
+    // noinspection JSUnusedGlobalSymbols
     disconnectedCallback() {
         if (this._updateIntervalId) {
             clearInterval(this._updateIntervalId);
             this._updateIntervalId = null;
         }
+
+        // Deferred: a DOM move is a disconnect immediately followed by a reconnect.
+        // Tearing down releases the map's WebGL context; browsers cap how many may live at once.
+        clearTimeout(this._teardownTimeout);
+        this._teardownTimeout = setTimeout(() => {
+            this._teardownTimeout = null;
+            if (this.isConnected) return;
+            this._mapView?.destroy();
+            this._mapView = null;
+        }, 0);
     }
 
     _checkConfig() {
@@ -403,7 +427,7 @@ class LastKnownLocationCard extends HTMLElement {
         this._baseLayoutReady = true;
 
         this.shadowRoot.innerHTML = `
-          <style>${css}\n${leafletCss}</style>
+          <style>${css}\n${leafletCss}\n${maplibreCss}</style>
           <ha-card>
             <div class="card">
               <div class="map-wrap">
@@ -452,7 +476,12 @@ class LastKnownLocationCard extends HTMLElement {
 
         this._isLoadingMap = true;
         try {
-            this._mapView = new LocationLeafletMap(container, this._getHomeZoneCenter());
+            this._mapView = new LocationLeafletMap(container, this._getHomeZoneCenter(), {
+                mapTileUrl: this._config.map_tile_url,
+                mapAttribution: this._config.map_attribution,
+                fetchMapTilesToken: async () =>
+                    (await this._hass.connection.sendMessagePromise({type: "map_tiles/access_token"})).token,
+            });
             this._setDarkMode();
             this._drawMapPaths();
         } catch (err) {
